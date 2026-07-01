@@ -38,6 +38,7 @@ export default function UploadDetails() {
   const [selectedTemplateId, setSelectedTemplateId] = useState('');
   const [sending, setSending] = useState(false);
   const [batchProgress, setBatchProgress] = useState<{ current: number; total: number; active: boolean } | null>(null);
+  const [nextBatchCountdown, setNextBatchCountdown] = useState<number | null>(null);
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const [isPreviewModalOpen, setIsPreviewModalOpen] = useState(false);
   const [iframeHeight, setIframeHeight] = useState('400px');
@@ -297,9 +298,24 @@ export default function UploadDetails() {
           // Refresh list / stats in background
           fetchDetails();
 
-          // Sleep 200ms between batches to honor rate limits
+          // Sleep 5 minutes between batches to honor rate limits
           if (i < batches.length - 1) {
-            await new Promise((resolve) => setTimeout(resolve, 200));
+            let countdown = 300; // 5 minutes = 300 seconds
+            setNextBatchCountdown(countdown);
+            
+            const timer = setInterval(() => {
+              countdown -= 1;
+              if (countdown <= 0) {
+                clearInterval(timer);
+                setNextBatchCountdown(null);
+              } else {
+                setNextBatchCountdown(countdown);
+              }
+            }, 1000);
+
+            await new Promise((resolve) => setTimeout(resolve, 300000));
+            clearInterval(timer);
+            setNextBatchCountdown(null);
           }
         }
 
@@ -369,7 +385,9 @@ export default function UploadDetails() {
             <Loader2 className="w-5 h-5 text-blue-400 animate-spin" />
             <p className="text-sm text-blue-400 font-medium">
               {batchProgress && batchProgress.active
-                ? `Sending emails... Batch ${batchProgress.current} of ${batchProgress.total} completed.`
+                ? nextBatchCountdown !== null
+                  ? `Batch ${batchProgress.current} of ${batchProgress.total} completed. Pausing for rate limits... Next batch in ${Math.floor(nextBatchCountdown / 60)}:${String(nextBatchCountdown % 60).padStart(2, '0')} mins.`
+                  : `Sending emails... Batch ${batchProgress.current + 1} of ${batchProgress.total} in progress.`
                 : 'Sending emails in progress...'}
             </p>
           </div>

@@ -416,42 +416,45 @@ apiRouter.post('/uploads/:id/send-batch', batchLimiter, catchAsync(async (req, r
   // Templates are compiled once per batch — cache handles cross-batch reuse
   const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
 
-  const results = await Promise.all(
-    contacts.map(async (contact) => {
-      const token = crypto
-        .createHash('sha256')
-        .update(contact.email + 'desire-unsubscribe-salt')
-        .digest('hex')
-        .substring(0, 32);
-      const unsubscribeLink = `${frontendUrl}/unsubscribe/${token}`;
+  const results = [];
+  for (const contact of contacts) {
+    const token = crypto
+      .createHash('sha256')
+      .update(contact.email + 'desire-unsubscribe-salt')
+      .digest('hex')
+      .substring(0, 32);
+    const unsubscribeLink = `${frontendUrl}/unsubscribe/${token}`;
 
-      const variables = { name: contact.name, email: contact.email, unsubscribeLink };
-      // renderTemplate now uses LRU cache — no recompile on repeat calls
-      const rendered = renderTemplate(
-        { id: template.id, subject: template.subject, htmlBody: template.htmlBody, plainTextBody: template.plainTextBody },
-        variables
-      );
+    const variables = { name: contact.name, email: contact.email, unsubscribeLink };
+    const rendered = renderTemplate(
+      { id: template.id, subject: template.subject, htmlBody: template.htmlBody, plainTextBody: template.plainTextBody },
+      variables
+    );
 
-      let attempts = 0;
-      const maxAttempts = 3;
-      let lastError = null;
+    let attempts = 0;
+    const maxAttempts = 3;
+    let lastError = null;
+    let sentSuccessfully = false;
 
-      while (attempts < maxAttempts) {
-        try {
-          await sendEmail({ to: contact.email, subject: rendered.subject, html: rendered.html, text: rendered.text });
-          await prisma.contact.update({
-            where: { id: contact.id },
-            data: { deliveryStatus: 'sent', deliveryError: null, sentAt: new Date() },
-          });
-          return { id: contact.id, status: 'sent' };
-        } catch (err) {
-          attempts++;
-          lastError = err;
-          console.warn(`[Retry] Attempt ${attempts} failed for ${contact.email}: ${err.message}`);
-          if (attempts < maxAttempts) await new Promise((r) => setTimeout(r, 2000));
-        }
+    while (attempts < maxAttempts) {
+      try {
+        await sendEmail({ to: contact.email, subject: rendered.subject, html: rendered.html, text: rendered.text });
+        await prisma.contact.update({
+          where: { id: contact.id },
+          data: { deliveryStatus: 'sent', deliveryError: null, sentAt: new Date() },
+        });
+        results.push({ id: contact.id, status: 'sent' });
+        sentSuccessfully = true;
+        break;
+      } catch (err) {
+        attempts++;
+        lastError = err;
+        console.warn(`[Retry] Attempt ${attempts} failed for ${contact.email}: ${err.message}`);
+        if (attempts < maxAttempts) await new Promise((r) => setTimeout(r, 2000));
       }
+    }
 
+    if (!sentSuccessfully) {
       await prisma.contact.update({
         where: { id: contact.id },
         data: {
@@ -459,9 +462,13 @@ apiRouter.post('/uploads/:id/send-batch', batchLimiter, catchAsync(async (req, r
           deliveryError: lastError?.message || 'All retry attempts failed',
         },
       });
-      return { id: contact.id, status: 'failed' };
-    })
-  );
+      results.push({ id: contact.id, status: 'failed' });
+    }
+
+    // Add a random delay (jitter) between 2.5s and 3.5s per email to stay under M365 limits
+    const delay = Math.floor(Math.random() * 1000) + 2500;
+    await new Promise((r) => setTimeout(r, delay));
+  }
 
   let sentCount = 0, failedCount = 0;
   for (const r of results) {
