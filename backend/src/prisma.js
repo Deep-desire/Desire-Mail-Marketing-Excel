@@ -1,12 +1,16 @@
 const { PrismaClient } = require('@prisma/client');
 
+let dbUrl = process.env.DATABASE_URL;
+
+// Fallback: If Vercel is still providing the direct IPv6 URL, automatically rewrite it to the IPv4 pooler URL.
+if (dbUrl && dbUrl.includes('db.cbsyzgiwyzcwomskyhdl.supabase.co')) {
+  dbUrl = 'postgresql://postgres.cbsyzgiwyzcwomskyhdl:Siz%23gul1233@aws-0-ap-south-1.pooler.supabase.com:6543/postgres?pgbouncer=true';
+}
+
 const prisma = new PrismaClient({
   datasources: {
     db: {
-      // Connection pool size passed via DATABASE_URL query params (?connection_limit=10)
-      // when using Supabase PgBouncer (transaction mode, port 6543).
-      // The env var already includes the full URL; no override needed here.
-      url: process.env.DATABASE_URL,
+      url: dbUrl,
     },
   },
 });
