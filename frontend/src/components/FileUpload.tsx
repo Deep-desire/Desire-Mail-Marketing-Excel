@@ -6,6 +6,9 @@ interface Props {
   isUploading: boolean;
 }
 
+
+
+
 export default function FileUpload({ onFileSelect, isUploading }: Props) {
   const [isDragging, setIsDragging] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -59,9 +62,9 @@ export default function FileUpload({ onFileSelect, isUploading }: Props) {
         className={`relative flex flex-col items-center justify-center w-full h-52 
                      rounded-2xl border-2 border-dashed cursor-pointer transition-all duration-300
                      ${isDragging
-                       ? 'border-brand-500 bg-brand-500/10 scale-[1.02]'
-                       : 'border-white/10 bg-white/5 hover:border-brand-500/50 hover:bg-white/10'
-                     }
+            ? 'border-brand-500 bg-brand-500/10 scale-[1.02]'
+            : 'border-white/10 bg-white/5 hover:border-brand-500/50 hover:bg-white/10'
+          }
                      ${isUploading ? 'pointer-events-none opacity-60' : ''}
                    `}
       >
