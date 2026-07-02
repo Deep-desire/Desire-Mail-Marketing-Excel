@@ -49,8 +49,18 @@ export default function DeliveryLogs() {
   const [totalPages, setTotalPages] = useState(1);
   const [limit] = useState(10);
   const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [status, setStatus] = useState<'all' | 'sent' | 'failed' | 'pending' | 'skipped'>(initialStatus);
   const [loading, setLoading] = useState(true);
+
+  // Debounce search input
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(search);
+    }, 300);
+
+    return () => clearTimeout(timer);
+  }, [search]);
 
   // Detail Modal States
   const [selectedLog, setSelectedLog] = useState<LogItem | null>(null);
@@ -66,7 +76,7 @@ export default function DeliveryLogs() {
     }
   };
 
-  const fetchLogs = useCallback(async (targetPage = page, currentStatus = status, currentSearch = search) => {
+  const fetchLogs = useCallback(async (targetPage: number, currentStatus: typeof status, currentSearch: string) => {
     setLoading(true);
     try {
       const res = await uploadApi.getDeliveryLogs({
@@ -84,20 +94,20 @@ export default function DeliveryLogs() {
     } finally {
       setLoading(false);
     }
-  }, [page, status, search, limit]);
+  }, [limit]);
 
   useEffect(() => {
-    fetchLogs(1, status, search);
-  }, [status]);
+    fetchLogs(1, status, debouncedSearch);
+  }, [status, debouncedSearch, fetchLogs]);
 
   const handleSearchKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') {
-      fetchLogs(1, status, search);
+      setDebouncedSearch(search);
     }
   };
 
   const handleRefresh = () => {
-    fetchLogs(page, status, search);
+    fetchLogs(page, status, debouncedSearch);
     toast.success('Logs refreshed');
   };
 
@@ -207,7 +217,7 @@ export default function DeliveryLogs() {
             className="input-field pr-10 text-sm py-2"
           />
           <button
-            onClick={() => fetchLogs(1, status, search)}
+            onClick={() => setDebouncedSearch(search)}
             className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-white"
           >
             <Search className="w-4 h-4" />
@@ -326,7 +336,7 @@ export default function DeliveryLogs() {
           </p>
           <div className="flex items-center gap-2">
             <button
-              onClick={() => fetchLogs(page - 1, status, search)}
+              onClick={() => fetchLogs(page - 1, status, debouncedSearch)}
               disabled={page === 1}
               className="p-2 rounded-lg bg-white/5 border border-white/10 text-gray-400 hover:bg-white/10 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
             >
@@ -336,7 +346,7 @@ export default function DeliveryLogs() {
               Page {page} of {totalPages}
             </span>
             <button
-              onClick={() => fetchLogs(page + 1, status, search)}
+              onClick={() => fetchLogs(page + 1, status, debouncedSearch)}
               disabled={page === totalPages}
               className="p-2 rounded-lg bg-white/5 border border-white/10 text-gray-400 hover:bg-white/10 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
             >
