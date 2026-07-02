@@ -8,6 +8,7 @@ const SMTP_HOST = process.env.SMTP_HOST || '';
 const SMTP_PORT = parseInt(process.env.SMTP_PORT || '587', 10);
 const SMTP_USER = process.env.SMTP_USER || '';
 const SMTP_PASS = process.env.SMTP_PASS || '';
+const SMTP_FROM_NAME = process.env.SMTP_FROM_NAME || 'Desire Mail';
 
 // Initialize Azure Communication Services Email Client
 const isAzureConfigured = 
@@ -53,7 +54,7 @@ async function sendViaAzure(options) {
 }
 
 async function sendViaSMTP(options) {
-  const fromAddress = SMTP_USER ? `Desire Mail <${SMTP_USER}>` : AZURE_COMMUNICATION_FROM_EMAIL;
+  const fromAddress = SMTP_USER ? `${SMTP_FROM_NAME} <${SMTP_USER}>` : AZURE_COMMUNICATION_FROM_EMAIL;
   const info = await smtpTransporter.sendMail({
     from: fromAddress,
     to: options.to,
