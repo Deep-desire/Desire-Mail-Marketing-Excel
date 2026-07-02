@@ -271,7 +271,7 @@ export default function UploadDetails() {
       setIsSendModalOpen(false);
 
       if (queuedContacts && queuedContacts.length > 0) {
-        const batchSize = 25;
+        const batchSize = 5;
         const batches = [];
         for (let i = 0; i < queuedContacts.length; i += batchSize) {
           batches.push(queuedContacts.slice(i, i + batchSize));
@@ -298,9 +298,9 @@ export default function UploadDetails() {
           // Refresh list / stats in background
           fetchDetails();
 
-          // Sleep 5 minutes between batches to honor rate limits
+          // Sleep 15 seconds between batches to honor rate limits
           if (i < batches.length - 1) {
-            let countdown = 300; // 5 minutes = 300 seconds
+            let countdown = 15; // 15 seconds
             setNextBatchCountdown(countdown);
             
             const timer = setInterval(() => {
@@ -313,7 +313,7 @@ export default function UploadDetails() {
               }
             }, 1000);
 
-            await new Promise((resolve) => setTimeout(resolve, 300000));
+            await new Promise((resolve) => setTimeout(resolve, 15000));
             clearInterval(timer);
             setNextBatchCountdown(null);
           }
