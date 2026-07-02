@@ -26,7 +26,7 @@ export interface Upload {
   pendingCount: number;
   skippedCount: number;
   templateId: string | null;
-  template?: { name: string };
+  template?: Template;
   createdAt: string;
 }
 

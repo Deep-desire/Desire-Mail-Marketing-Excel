@@ -1,5 +1,5 @@
 import api from './axios';
-import { Upload, ContactsResponse, DashboardStats, Contact } from '../types';
+import { Upload, ContactsResponse, DashboardStats, Contact, Template } from '../types';
 
 export const uploadApi = {
   uploadExcel: (file: File) => {
@@ -57,4 +57,13 @@ export const uploadApi = {
       pendingCount: number;
       skippedCount: number;
     }>(`/uploads/${id}/stats`),
+
+  getDeliveryLogs: (params: { page?: number; limit?: number; search?: string; status?: string }) =>
+    api.get<{
+      logs: Array<Contact & { upload: { originalName: string; fileName: string; template: Template | null } }>;
+      total: number;
+      page: number;
+      limit: number;
+      totalPages: number;
+    }>('/contacts/logs', { params }),
 };

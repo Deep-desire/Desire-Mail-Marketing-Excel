@@ -7,6 +7,7 @@ interface Props {
   color: 'indigo' | 'emerald' | 'amber' | 'rose';
   subtitle?: string;
   onClick?: () => void;
+  isActive?: boolean;
 }
 
 const colorMap = {
@@ -36,16 +37,24 @@ const colorMap = {
   },
 };
 
-export default function StatsCard({ title, value, icon, color, subtitle, onClick }: Props) {
+export default function StatsCard({ title, value, icon, color, subtitle, onClick, isActive }: Props) {
   const c = colorMap[color];
+
+  const borderClass = isActive
+    ? {
+      indigo: 'border-brand-500 ring-2 ring-brand-500/20 bg-brand-600/10',
+      emerald: 'border-emerald-500 ring-2 ring-emerald-500/20 bg-emerald-600/10',
+      amber: 'border-amber-500 ring-2 ring-amber-500/20 bg-amber-600/10',
+      rose: 'border-rose-500 ring-2 ring-rose-500/20 bg-rose-600/10',
+    }[color]
+    : c.border;
 
   return (
     <div
       onClick={onClick}
-      className={`glass-card bg-gradient-to-br ${c.bg} border ${c.border} p-6 shadow-lg ${c.glow} 
-                  transition-all duration-300 hover:scale-[1.02] hover:shadow-xl ${
-                    onClick ? 'cursor-pointer select-none active:scale-[0.98]' : ''
-                  }`}
+      className={`glass-card bg-gradient-to-br ${c.bg} border ${borderClass} p-6 shadow-lg ${c.glow} 
+                  transition-all duration-300 hover:scale-[1.02] hover:shadow-xl ${onClick ? 'cursor-pointer select-none active:scale-[0.98]' : ''
+        }`}
     >
       <div className="flex items-start justify-between">
         <div>

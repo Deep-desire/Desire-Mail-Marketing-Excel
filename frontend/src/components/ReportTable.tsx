@@ -49,9 +49,8 @@ export default function ReportTable<T>({ data, columns, pageSize = 20 }: Props<T
               {table.getRowModel().rows.map((row, i) => (
                 <tr
                   key={row.id}
-                  className={`border-b border-white/5 transition-colors hover:bg-white/5 ${
-                    i % 2 === 0 ? 'bg-white/[0.02]' : ''
-                  }`}
+                  className={`border-b border-white/5 transition-colors hover:bg-white/5 ${i % 2 === 0 ? 'bg-white/[0.02]' : ''
+                    }`}
                 >
                   {row.getVisibleCells().map((cell) => (
                     <td

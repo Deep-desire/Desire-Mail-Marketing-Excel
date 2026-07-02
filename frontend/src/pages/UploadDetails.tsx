@@ -14,6 +14,7 @@ import {
   Eye,
   Pencil,
   Trash2,
+  AlertTriangle,
 } from 'lucide-react';
 import { createColumnHelper } from '@tanstack/react-table';
 import toast from 'react-hot-toast';
@@ -55,7 +56,44 @@ export default function UploadDetails() {
   const [deletingContact, setDeletingContact] = useState<Contact | null>(null);
   const [deleting, setDeleting] = useState(false);
 
+  // Detail Modal States
+  const [selectedLog, setSelectedLog] = useState<Contact | null>(null);
+  const [isLogModalOpen, setIsLogModalOpen] = useState(false);
+  const [statusFilter, setStatusFilter] = useState<'all' | 'sent' | 'failed' | 'pending' | 'skipped'>('all');
+
   const selectedTemplate = templates.find((t) => t.id === selectedTemplateId);
+
+  const handleViewLogClick = (contact: Contact) => {
+    setSelectedLog(contact);
+    setIsLogModalOpen(true);
+  };
+
+  const filteredContacts = useMemo(() => {
+    if (statusFilter === 'all') return contacts;
+    return contacts.filter((c) => c.deliveryStatus === statusFilter);
+  }, [contacts, statusFilter]);
+
+  // Compile subject and html template on the fly for the preview
+  const compiledEmail = useMemo(() => {
+    if (!selectedLog || !upload?.template) return null;
+
+    const template = upload.template;
+    const name = selectedLog.name;
+    const email = selectedLog.email;
+    const unsubscribeLink = `${window.location.origin}/unsubscribe/preview-token`;
+
+    const replaceVars = (text: string) => {
+      return text
+        .replace(/\{\{\s*name\s*\}\}/g, name)
+        .replace(/\{\{\s*email\s*\}\}/g, email)
+        .replace(/\{\{\s*unsubscribeLink\s*\}\}/g, unsubscribeLink);
+    };
+
+    return {
+      subject: replaceVars(template.subject),
+      html: replaceVars(template.htmlBody),
+    };
+  }, [selectedLog, upload?.template]);
 
   const handleEditClick = (contact: Contact) => {
     setEditingContact(contact);
@@ -150,6 +188,15 @@ export default function UploadDetails() {
         const isProcessing = upload?.status === 'processing';
         return (
           <div className="flex items-center gap-2">
+            {contact.deliveryStatus !== 'idle' && (
+              <button
+                onClick={() => handleViewLogClick(contact)}
+                className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 hover:text-brand-400 transition-colors text-gray-400"
+                title="View Sent/Failed Email"
+              >
+                <Eye className="w-4 h-4" />
+              </button>
+            )}
             <button
               onClick={() => handleEditClick(contact)}
               className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 hover:text-brand-400 transition-colors text-gray-400 disabled:opacity-30 disabled:cursor-not-allowed"
@@ -188,7 +235,7 @@ export default function UploadDetails() {
         setIframeHeight(`${height}px`);
       }
     };
-    
+
     updateHeight();
     setTimeout(updateHeight, 200);
     setTimeout(updateHeight, 1000);
@@ -211,7 +258,7 @@ export default function UploadDetails() {
 
   useEffect(() => {
     if (!id) return;
-    
+
     // Initial fetch
     Promise.all([
       uploadApi.getOne(id),
@@ -294,7 +341,7 @@ export default function UploadDetails() {
           });
 
           setBatchProgress({ current: i + 1, total: batches.length, active: true });
-          
+
           // Refresh list / stats in background
           fetchDetails();
 
@@ -302,7 +349,7 @@ export default function UploadDetails() {
           if (i < batches.length - 1) {
             let countdown = 15; // 15 seconds
             setNextBatchCountdown(countdown);
-            
+
             const timer = setInterval(() => {
               countdown -= 1;
               if (countdown <= 0) {
@@ -424,30 +471,40 @@ export default function UploadDetails() {
               value={upload.totalCount}
               icon={<Mail className="w-5 h-5" />}
               color="indigo"
+              onClick={() => setStatusFilter('all')}
+              isActive={statusFilter === 'all'}
             />
             <StatsCard
               title="Sent"
               value={upload.sentCount}
               icon={<Send className="w-5 h-5" />}
               color="emerald"
+              onClick={() => setStatusFilter('sent')}
+              isActive={statusFilter === 'sent'}
             />
             <StatsCard
               title="Failed"
               value={upload.failedCount}
               icon={<XCircle className="w-5 h-5" />}
               color="rose"
+              onClick={() => setStatusFilter('failed')}
+              isActive={statusFilter === 'failed'}
             />
             <StatsCard
               title="Pending"
               value={upload.pendingCount}
               icon={<Clock className="w-5 h-5" />}
               color="amber"
+              onClick={() => setStatusFilter('pending')}
+              isActive={statusFilter === 'pending'}
             />
             <StatsCard
               title="Skipped"
               value={upload.skippedCount}
               icon={<Ban className="w-5 h-5" />}
               color="indigo"
+              onClick={() => setStatusFilter('skipped')}
+              isActive={statusFilter === 'skipped'}
             />
           </div>
         </div>
@@ -455,8 +512,18 @@ export default function UploadDetails() {
 
       {/* Contacts Table */}
       <div className="space-y-4">
-        <h2 className="section-title">Contacts List</h2>
-        <ReportTable data={contacts} columns={columns} pageSize={25} />
+        <div className="flex items-center justify-between">
+          <h2 className="section-title">Contacts List</h2>
+          {statusFilter !== 'all' && (
+            <button
+              onClick={() => setStatusFilter('all')}
+              className="text-xs font-semibold text-brand-400 hover:text-brand-300 underline"
+            >
+              Clear filter ({statusFilter.toUpperCase()})
+            </button>
+          )}
+        </div>
+        <ReportTable data={filteredContacts} columns={columns} pageSize={25} />
       </div>
 
       {/* Send Template Modal */}
@@ -493,7 +560,7 @@ export default function UploadDetails() {
                   <label className="text-xs font-semibold text-gray-400 uppercase tracking-wider">
                     Choose Template
                   </label>
-                  
+
                   <div className="flex gap-2 items-center relative">
                     <div className="flex-1 relative">
                       {/* Custom Styled Dropdown Trigger */}
@@ -512,11 +579,11 @@ export default function UploadDetails() {
                       {isDropdownOpen && (
                         <>
                           {/* Click Outside Overlay */}
-                          <div 
-                            className="fixed inset-0 z-40 cursor-default" 
-                            onClick={() => setIsDropdownOpen(false)} 
+                          <div
+                            className="fixed inset-0 z-40 cursor-default"
+                            onClick={() => setIsDropdownOpen(false)}
                           />
-                          
+
                           {/* Options List */}
                           <div className="absolute left-0 right-0 mt-1.5 bg-slate-900/95 backdrop-blur-xl border border-white/10 rounded-xl shadow-2xl z-50 overflow-hidden max-h-60 overflow-y-auto">
                             <div className="p-1 divide-y divide-white/5">
@@ -530,11 +597,10 @@ export default function UploadDetails() {
                                       setSelectedTemplateId(t.id);
                                       setIsDropdownOpen(false);
                                     }}
-                                    className={`w-full px-4 py-3 text-left text-sm rounded-lg transition-colors flex items-center justify-between ${
-                                      isSelected
+                                    className={`w-full px-4 py-3 text-left text-sm rounded-lg transition-colors flex items-center justify-between ${isSelected
                                         ? 'bg-brand-600/30 text-white font-semibold'
                                         : 'text-gray-300 hover:bg-white/5 hover:text-white'
-                                    }`}
+                                      }`}
                                   >
                                     <span className="truncate">{t.name}</span>
                                     {isSelected && (
@@ -556,11 +622,10 @@ export default function UploadDetails() {
                         setIframeHeight('400px');
                         setIsPreviewModalOpen(true);
                       }}
-                      className={`p-3 rounded-xl border transition-all flex items-center justify-center shrink-0 ${
-                        selectedTemplateId
+                      className={`p-3 rounded-xl border transition-all flex items-center justify-center shrink-0 ${selectedTemplateId
                           ? 'bg-white/5 border-white/10 text-gray-400 hover:text-white hover:bg-white/10 hover:border-white/20'
                           : 'bg-white/5 border-white/5 text-gray-600 cursor-not-allowed'
-                      }`}
+                        }`}
                       title="Preview Template"
                       disabled={!selectedTemplateId}
                     >
@@ -634,7 +699,7 @@ export default function UploadDetails() {
                   <span>deep &lt;deep@example.com&gt;</span>
                 </div>
               </div>
-              
+
               {/* Email Content Frame */}
               <div className="flex-1 bg-slate-900/50 overflow-y-auto p-4 md:p-6 flex justify-center">
                 <div className="bg-white rounded-lg shadow-xl w-full max-w-[650px] overflow-hidden self-start">
@@ -672,10 +737,10 @@ export default function UploadDetails() {
                         </head>
                         <body>
                           ${selectedTemplate.htmlBody
-                            .replace(/\{\{\s*name\s*\}\}/g, 'deep')
-                            .replace(/\{\{\s*email\s*\}\}/g, 'deep@example.com')
-                            .replace(/\{\{\s*unsubscribeLink\s*\}\}/g, '#')
-                          }
+                        .replace(/\{\{\s*name\s*\}\}/g, 'deep')
+                        .replace(/\{\{\s*email\s*\}\}/g, 'deep@example.com')
+                        .replace(/\{\{\s*unsubscribeLink\s*\}\}/g, '#')
+                      }
                         </body>
                       </html>
                     `}
@@ -828,6 +893,138 @@ export default function UploadDetails() {
                 ) : (
                   'Delete Contact'
                 )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Email Detail View Modal */}
+      {isLogModalOpen && selectedLog && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[60] p-4 md:p-8 animate-fade-in">
+          <div className="glass-card max-w-3xl w-full p-6 space-y-4 relative border border-white/10 flex flex-col max-h-[90vh]">
+            <button
+              onClick={() => setIsLogModalOpen(false)}
+              className="absolute right-4 top-4 p-1.5 rounded-lg bg-white/5 hover:bg-white/10 transition-colors text-gray-400"
+            >
+              <X className="w-4 h-4" />
+            </button>
+
+            <div>
+              <h3 className="text-xl font-bold text-white flex items-center gap-2">
+                <Eye className="w-5 h-5 text-brand-400" />
+                Email Delivery Details
+              </h3>
+              <p className="text-xs text-gray-400 mt-1">
+                Campaign File: <span className="font-semibold text-white">{upload?.originalName}</span>
+              </p>
+            </div>
+
+            {/* Error Message banner if failed */}
+            {selectedLog.deliveryStatus === 'failed' && selectedLog.deliveryError && (
+              <div className="bg-red-500/10 border border-red-500/20 text-red-400 p-3.5 rounded-xl text-xs flex gap-3 items-start">
+                <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                <div>
+                  <span className="font-bold block mb-1">Sending Error Log:</span>
+                  <span className="font-mono block break-all">{selectedLog.deliveryError}</span>
+                </div>
+              </div>
+            )}
+
+            {/* Email client container mock */}
+            <div className="border border-white/10 rounded-xl overflow-hidden bg-slate-950 flex flex-col flex-1 min-h-[350px]">
+              {/* Email Client Header */}
+              <div className="bg-white/5 p-4 border-b border-white/10 space-y-2 text-xs text-gray-300">
+                <div>
+                  <span className="text-gray-500 font-semibold inline-block w-16">Subject:</span>
+                  <span className="text-white font-medium text-sm">
+                    {compiledEmail?.subject || '—'}
+                  </span>
+                </div>
+                <div className="flex flex-wrap gap-x-6 gap-y-1">
+                  <div>
+                    <span className="text-gray-500 font-semibold inline-block w-16">Recipient:</span>
+                    <span className="text-white font-medium">{selectedLog.name}</span>
+                    <span className="text-gray-400 ml-1.5">&lt;{selectedLog.email}&gt;</span>
+                  </div>
+                  <div>
+                    <span className="text-gray-500 font-semibold inline-block w-16">Status:</span>
+                    <span className="inline-block scale-90 origin-left">
+                      <StatusBadge status={selectedLog.deliveryStatus} />
+                    </span>
+                  </div>
+                </div>
+                {selectedLog.sentAt && (
+                  <div>
+                    <span className="text-gray-500 font-semibold inline-block w-16">Time:</span>
+                    <span>{new Date(selectedLog.sentAt).toLocaleString()}</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Email Content Frame */}
+              <div className="flex-1 bg-slate-900/50 overflow-y-auto p-4 md:p-6 flex justify-center">
+                <div className="bg-white rounded-lg shadow-xl w-full max-w-[650px] overflow-hidden self-start">
+                  {upload?.template && compiledEmail ? (
+                    <iframe
+                      title="Compiled Html Template Body Preview"
+                      onLoad={handleIframeLoad}
+                      style={{ height: iframeHeight }}
+                      srcDoc={`
+                        <!DOCTYPE html>
+                        <html>
+                          <head>
+                            <meta charset="utf-8">
+                            <style>
+                              body {
+                                font-family: 'Inter', system-ui, -apple-system, sans-serif;
+                                color: #1e293b;
+                                line-height: 1.6;
+                                background-color: #ffffff;
+                                margin: 0;
+                                padding: 20px;
+                              }
+                              ::-webkit-scrollbar {
+                                width: 6px;
+                                height: 6px;
+                              }
+                              ::-webkit-scrollbar-track {
+                                background: #f1f5f9;
+                              }
+                              ::-webkit-scrollbar-thumb {
+                                background: #cbd5e1;
+                                border-radius: 3px;
+                              }
+                            </style>
+                          </head>
+                          <body>
+                            ${compiledEmail.html}
+                          </body>
+                        </html>
+                      `}
+                      className="w-full border-0 block"
+                    />
+                  ) : (
+                    <div className="p-12 text-center text-gray-500 bg-white">
+                      <Mail className="w-12 h-12 mx-auto mb-3 opacity-20" />
+                      <p className="text-sm">No template email content available (Sent in PlainText or Template Deleted)</p>
+                      {upload?.template?.plainTextBody && (
+                        <div className="mt-4 p-4 bg-slate-50 border border-slate-100 rounded-lg text-left text-xs font-mono text-gray-700 whitespace-pre-wrap">
+                          {upload.template.plainTextBody}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <div className="flex justify-end pt-2">
+              <button
+                onClick={() => setIsLogModalOpen(false)}
+                className="btn-secondary text-sm py-2 px-6"
+              >
+                Close Preview
               </button>
             </div>
           </div>

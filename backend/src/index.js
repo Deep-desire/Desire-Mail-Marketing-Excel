@@ -560,6 +560,59 @@ apiRouter.delete('/uploads/:id', catchAsync(async (req, res) => {
   return res.status(200).json({ message: 'Upload deleted successfully' });
 }));
 
+// GET /contacts/logs
+apiRouter.get('/contacts/logs', catchAsync(async (req, res) => {
+  await authenticate(req);
+
+  const page = parseInt(req.query.page || '1', 10);
+  const limit = parseInt(req.query.limit || '10', 10);
+  const skip = (page - 1) * limit;
+  const { search, status } = req.query;
+
+  const where = {
+    deliveryStatus: { not: 'idle' },
+  };
+
+  if (status && status !== 'all') {
+    where.deliveryStatus = status;
+  }
+
+  if (search) {
+    where.OR = [
+      { name: { contains: search, mode: 'insensitive' } },
+      { email: { contains: search, mode: 'insensitive' } },
+    ];
+  }
+
+  const [logs, total] = await Promise.all([
+    prisma.contact.findMany({
+      where,
+      include: {
+        upload: {
+          include: {
+            template: true,
+          },
+        },
+      },
+      skip,
+      take: limit,
+      orderBy: [
+        { sentAt: 'desc' },
+        { createdAt: 'desc' },
+      ],
+    }),
+    prisma.contact.count({ where }),
+  ]);
+
+  return res.status(200).json({
+    logs,
+    total,
+    page,
+    limit,
+    totalPages: Math.ceil(total / limit),
+  });
+}));
+
 // PUT /contacts/:id
 apiRouter.put('/contacts/:id', catchAsync(async (req, res) => {
   const { id } = req.params;
