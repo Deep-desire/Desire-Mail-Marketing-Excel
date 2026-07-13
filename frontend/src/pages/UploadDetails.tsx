@@ -35,6 +35,7 @@ export default function UploadDetails() {
 
   // Send Modal States
   const [isSendModalOpen, setIsSendModalOpen] = useState(false);
+  const [isEditingSchedule, setIsEditingSchedule] = useState(false);
   const [templates, setTemplates] = useState<Template[]>([]);
   const [selectedTemplateId, setSelectedTemplateId] = useState('');
   const [sending, setSending] = useState(false);
@@ -316,6 +317,29 @@ export default function UploadDetails() {
     }
   };
 
+  const handleOpenEditScheduleModal = async () => {
+    try {
+      const res = await templateApi.getAll();
+      setTemplates(res.data);
+      if (upload?.templateId) {
+        setSelectedTemplateId(upload.templateId);
+      } else if (res.data.length > 0) {
+        setSelectedTemplateId(res.data[0].id);
+      }
+      if (upload?.scheduledAt) {
+        const date = new Date(upload.scheduledAt);
+        const tzOffset = date.getTimezoneOffset() * 60000;
+        setScheduledAt(new Date(date.getTime() - tzOffset).toISOString().slice(0, 16));
+      }
+      setSendType('scheduled');
+      setIsEditingSchedule(true);
+      setIsDropdownOpen(false);
+      setIsSendModalOpen(true);
+    } catch {
+      toast.error('Failed to load templates');
+    }
+  };
+
   const handleStartSend = async () => {
     if (!id || !selectedTemplateId) return;
 
@@ -336,11 +360,12 @@ export default function UploadDetails() {
           templateId: selectedTemplateId,
           scheduledAt: schedDate.toISOString(),
         });
-        toast.success('Campaign scheduled successfully!');
+        toast.success(isEditingSchedule ? 'Campaign schedule updated successfully!' : 'Campaign scheduled successfully!');
         setIsSendModalOpen(false);
+        setIsEditingSchedule(false);
         fetchDetails();
       } catch (err: any) {
-        toast.error(err.response?.data?.message || 'Failed to schedule campaign');
+        toast.error(err.response?.data?.message || (isEditingSchedule ? 'Failed to update campaign schedule' : 'Failed to schedule campaign'));
       } finally {
         setSending(false);
       }
@@ -503,13 +528,22 @@ export default function UploadDetails() {
               )}
             </div>
           </div>
-          <button
-            onClick={handleCancelSchedule}
-            className="px-4 py-2 border border-red-500/30 hover:border-red-500 hover:bg-red-500/10 text-red-400 rounded-xl text-sm font-semibold transition-all self-start md:self-center"
-            disabled={sending}
-          >
-            Cancel Schedule
-          </button>
+          <div className="flex items-center gap-2 self-start md:self-center">
+            <button
+              onClick={handleOpenEditScheduleModal}
+              className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-sm font-semibold transition-all shadow-[0_0_12px_rgba(168,85,247,0.3)]"
+              disabled={sending}
+            >
+              Edit Schedule
+            </button>
+            <button
+              onClick={handleCancelSchedule}
+              className="px-4 py-2 border border-red-500/30 hover:border-red-500 hover:bg-red-500/10 text-red-400 rounded-xl text-sm font-semibold transition-all"
+              disabled={sending}
+            >
+              Cancel Schedule
+            </button>
+          </div>
         </div>
       )}
 
@@ -619,16 +653,23 @@ export default function UploadDetails() {
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-fade-in">
           <div className="glass-card max-w-md w-full p-6 space-y-6 relative border border-white/10 animate-scale-in">
             <button
-              onClick={() => setIsSendModalOpen(false)}
+              onClick={() => {
+                setIsSendModalOpen(false);
+                setIsEditingSchedule(false);
+              }}
               className="absolute right-4 top-4 p-1.5 rounded-lg bg-white/5 hover:bg-white/10 transition-colors text-gray-400"
             >
               <X className="w-4 h-4" />
             </button>
 
             <div>
-              <h3 className="text-xl font-bold text-white">Send Email Template</h3>
+              <h3 className="text-xl font-bold text-white">
+                {isEditingSchedule ? 'Edit Scheduled Campaign' : 'Send Email Template'}
+              </h3>
               <p className="text-sm text-gray-400 mt-1">
-                Select a template to send to the {upload.validEmails} valid contacts in this list.
+                {isEditingSchedule
+                  ? 'Update the scheduled time or template for this campaign.'
+                  : `Select a template to send to the ${upload.validEmails} valid contacts in this list.`}
               </p>
             </div>
 
@@ -723,35 +764,37 @@ export default function UploadDetails() {
                 </div>
 
                 {/* Send Type Selector */}
-                <div className="space-y-2">
-                  <label className="text-xs font-semibold text-gray-400 uppercase tracking-wider">
-                    Sending Method
-                  </label>
-                  <div className="grid grid-cols-2 gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setSendType('immediate')}
-                      className={`py-2.5 px-3 text-xs font-semibold rounded-xl border transition-all ${
-                        sendType === 'immediate'
-                          ? 'bg-brand-600/30 text-white border-brand-500 shadow-[0_0_12px_rgba(99,102,241,0.2)]'
-                          : 'bg-white/5 border-white/10 text-gray-400 hover:text-white hover:bg-white/10'
-                      }`}
-                    >
-                      Send Immediately
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setSendType('scheduled')}
-                      className={`py-2.5 px-3 text-xs font-semibold rounded-xl border transition-all ${
-                        sendType === 'scheduled'
-                          ? 'bg-brand-600/30 text-white border-brand-500 shadow-[0_0_12px_rgba(99,102,241,0.2)]'
-                          : 'bg-white/5 border-white/10 text-gray-400 hover:text-white hover:bg-white/10'
-                      }`}
-                    >
-                      Schedule for Later
-                    </button>
+                {!isEditingSchedule && (
+                  <div className="space-y-2">
+                    <label className="text-xs font-semibold text-gray-400 uppercase tracking-wider">
+                      Sending Method
+                    </label>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setSendType('immediate')}
+                        className={`py-2.5 px-3 text-xs font-semibold rounded-xl border transition-all ${
+                          sendType === 'immediate'
+                            ? 'bg-brand-600/30 text-white border-brand-500 shadow-[0_0_12px_rgba(99,102,241,0.2)]'
+                            : 'bg-white/5 border-white/10 text-gray-400 hover:text-white hover:bg-white/10'
+                        }`}
+                      >
+                        Send Immediately
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setSendType('scheduled')}
+                        className={`py-2.5 px-3 text-xs font-semibold rounded-xl border transition-all ${
+                          sendType === 'scheduled'
+                            ? 'bg-brand-600/30 text-white border-brand-500 shadow-[0_0_12px_rgba(99,102,241,0.2)]'
+                            : 'bg-white/5 border-white/10 text-gray-400 hover:text-white hover:bg-white/10'
+                        }`}
+                      >
+                        Schedule for Later
+                      </button>
+                    </div>
                   </div>
-                </div>
+                )}
 
                 {/* Date/Time Picker */}
                 {sendType === 'scheduled' && (
@@ -779,6 +822,7 @@ export default function UploadDetails() {
                   <button
                     onClick={() => {
                       setIsSendModalOpen(false);
+                      setIsEditingSchedule(false);
                       setSendType('immediate');
                       const date = new Date();
                       date.setHours(date.getHours() + 1);
@@ -803,7 +847,7 @@ export default function UploadDetails() {
                     ) : (
                       <Send className="w-4 h-4" />
                     )}
-                    {sendType === 'scheduled' ? 'Schedule Campaign' : 'Send Emails'}
+                    {sendType === 'scheduled' ? (isEditingSchedule ? 'Update Schedule' : 'Schedule Campaign') : 'Send Emails'}
                   </button>
                 </div>
               </div>

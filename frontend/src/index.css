@@ -3,6 +3,10 @@
 @tailwind utilities;
 
 /* ── Global Styles ── */
+html {
+  color-scheme: dark;
+}
+
 * {
   margin: 0;
   padding: 0;

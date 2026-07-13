@@ -70,7 +70,7 @@ function invalidateUnsubscribedCache() {
 // --- Valid upload status transitions ---
 const VALID_TRANSITIONS = {
   idle: ['processing', 'scheduled'],
-  scheduled: ['idle', 'processing'],
+  scheduled: ['idle', 'processing', 'scheduled'],
   processing: ['completed', 'failed'],
   completed: [],
   failed: ['idle'],
