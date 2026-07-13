@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo, useCallback } from 'react';
+import { useEffect, useState, useMemo, useCallback, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
   Search,
@@ -52,6 +52,8 @@ export default function DeliveryLogs() {
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [status, setStatus] = useState<'all' | 'sent' | 'failed' | 'pending' | 'skipped'>(initialStatus);
   const [loading, setLoading] = useState(true);
+  const [selectedDate, setSelectedDate] = useState('');
+  const dateInputRef = useRef<HTMLInputElement>(null);
 
   // Debounce search input
   useEffect(() => {
@@ -76,7 +78,12 @@ export default function DeliveryLogs() {
     }
   };
 
-  const fetchLogs = useCallback(async (targetPage: number, currentStatus: typeof status, currentSearch: string) => {
+  const fetchLogs = useCallback(async (
+    targetPage: number,
+    currentStatus: typeof status,
+    currentSearch: string,
+    date?: string
+  ) => {
     setLoading(true);
     try {
       const res = await uploadApi.getDeliveryLogs({
@@ -84,6 +91,8 @@ export default function DeliveryLogs() {
         limit,
         status: currentStatus,
         search: currentSearch || undefined,
+        startDate: date || undefined,
+        endDate: date || undefined,
       });
       setLogs(res.data.logs as LogItem[]);
       setTotal(res.data.total);
@@ -97,8 +106,8 @@ export default function DeliveryLogs() {
   }, [limit]);
 
   useEffect(() => {
-    fetchLogs(1, status, debouncedSearch);
-  }, [status, debouncedSearch, fetchLogs]);
+    fetchLogs(1, status, debouncedSearch, selectedDate);
+  }, [status, debouncedSearch, selectedDate, fetchLogs]);
 
   const handleSearchKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') {
@@ -107,8 +116,20 @@ export default function DeliveryLogs() {
   };
 
   const handleRefresh = () => {
-    fetchLogs(page, status, debouncedSearch);
+    fetchLogs(page, status, debouncedSearch, selectedDate);
     toast.success('Logs refreshed');
+  };
+
+  const handleClearDateFilter = () => {
+    setSelectedDate('');
+  };
+
+  const getTodayDateString = () => {
+    const today = new Date();
+    const yyyy = today.getFullYear();
+    const mm = String(today.getMonth() + 1).padStart(2, '0');
+    const dd = String(today.getDate()).padStart(2, '0');
+    return `${yyyy}-${mm}-${dd}`;
   };
 
   const handleViewClick = (log: LogItem) => {
@@ -234,7 +255,51 @@ export default function DeliveryLogs() {
                 <th className="px-6 py-4">Recipient</th>
                 <th className="px-6 py-4">Campaign File</th>
                 <th className="px-6 py-4">Status</th>
-                <th className="px-6 py-4">Sent / Attempted At</th>
+                <th className="px-6 py-4 relative">
+                  <div className="flex items-center gap-1.5">
+                    {/* Hidden native input to show calendar picker directly */}
+                    <input
+                      type="date"
+                      ref={dateInputRef}
+                      value={selectedDate}
+                      max={getTodayDateString()}
+                      onChange={(e) => setSelectedDate(e.target.value)}
+                      className="absolute opacity-0 pointer-events-none w-0 h-0 [color-scheme:dark]"
+                      style={{ colorScheme: 'dark' }}
+                    />
+
+                    <button
+                      type="button"
+                      onClick={() => dateInputRef.current?.showPicker()}
+                      className={`flex items-center gap-1.5 uppercase font-semibold text-xs text-left transition-colors ${
+                        selectedDate
+                          ? 'text-brand-400 hover:text-brand-300'
+                          : 'text-gray-400 hover:text-white'
+                      }`}
+                    >
+                      <span>Sent / Attempted At</span>
+                      <Calendar className={`w-3.5 h-3.5 ${
+                        selectedDate
+                          ? 'text-brand-400 fill-brand-400/10'
+                          : 'text-gray-500'
+                      }`} />
+                    </button>
+
+                    {selectedDate && (
+                      <div className="flex items-center gap-1 text-[10px] bg-brand-500/10 border border-brand-500/20 text-brand-400 px-2 py-0.5 rounded-lg">
+                        <span>{new Date(selectedDate).toLocaleDateString()}</span>
+                        <button
+                          type="button"
+                          onClick={handleClearDateFilter}
+                          className="hover:text-red-400 transition-colors ml-0.5"
+                          title="Clear Date Filter"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </th>
                 <th className="px-6 py-4">Error Details</th>
                 <th className="px-6 py-4 text-right">Actions</th>
               </tr>
@@ -329,30 +394,32 @@ export default function DeliveryLogs() {
       </div>
 
       {/* Pagination Controls */}
-      {!loading && totalPages > 1 && (
+      {!loading && total > 0 && (
         <div className="flex items-center justify-between mt-4">
           <p className="text-sm text-gray-500">
             Showing {((page - 1) * limit) + 1} to {Math.min(page * limit, total)} of {total} logs
           </p>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => fetchLogs(page - 1, status, debouncedSearch)}
-              disabled={page === 1}
-              className="p-2 rounded-lg bg-white/5 border border-white/10 text-gray-400 hover:bg-white/10 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
-            >
-              <ChevronLeft className="w-4 h-4" />
-            </button>
-            <span className="text-sm text-gray-400 px-3">
-              Page {page} of {totalPages}
-            </span>
-            <button
-              onClick={() => fetchLogs(page + 1, status, debouncedSearch)}
-              disabled={page === totalPages}
-              className="p-2 rounded-lg bg-white/5 border border-white/10 text-gray-400 hover:bg-white/10 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
-            >
-              <ChevronRight className="w-4 h-4" />
-            </button>
-          </div>
+          {totalPages > 1 && (
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => fetchLogs(page - 1, status, debouncedSearch, selectedDate)}
+                disabled={page === 1}
+                className="p-2 rounded-lg bg-white/5 border border-white/10 text-gray-400 hover:bg-white/10 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
+              >
+                <ChevronLeft className="w-4 h-4" />
+              </button>
+              <span className="text-sm text-gray-400 px-3">
+                Page {page} of {totalPages}
+              </span>
+              <button
+                onClick={() => fetchLogs(page + 1, status, debouncedSearch, selectedDate)}
+                disabled={page === totalPages}
+                className="p-2 rounded-lg bg-white/5 border border-white/10 text-gray-400 hover:bg-white/10 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
+              >
+                <ChevronRight className="w-4 h-4" />
+              </button>
+            </div>
+          )}
         </div>
       )}
 

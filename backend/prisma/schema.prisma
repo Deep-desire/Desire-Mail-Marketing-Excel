@@ -40,8 +40,10 @@ model Upload {
   skippedCount Int       @default(0) @map("skipped_count")
   templateId   String?   @map("template_id")
   template     Template? @relation(fields: [templateId], references: [id])
+  scheduledAt  DateTime? @map("scheduled_at")
 
   @@index([status])
+  @@index([scheduledAt])
   @@index([createdAt])
   @@map("uploads")
 }

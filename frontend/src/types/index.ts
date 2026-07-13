@@ -19,7 +19,7 @@ export interface Upload {
   invalidEmails: number;
   duplicateEmails: number;
   unsubscribedEmails: number;
-  status: 'idle' | 'processing' | 'completed' | 'failed';
+  status: 'idle' | 'scheduled' | 'processing' | 'completed' | 'failed';
   totalCount: number;
   sentCount: number;
   failedCount: number;
@@ -27,6 +27,7 @@ export interface Upload {
   skippedCount: number;
   templateId: string | null;
   template?: Template;
+  scheduledAt?: string | null;
   createdAt: string;
 }
 

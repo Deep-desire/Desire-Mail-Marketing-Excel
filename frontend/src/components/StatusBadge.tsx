@@ -11,7 +11,9 @@ const statusColors: Record<string, string> = {
   unsubscribed: 'bg-gray-500/15 text-gray-400 border-gray-500/20',
 
   // Campaign statuses
+  idle: 'bg-slate-500/15 text-slate-400 border-slate-500/20',
   draft: 'bg-slate-500/15 text-slate-400 border-slate-500/20',
+  scheduled: 'bg-purple-500/15 text-purple-400 border-purple-500/20',
   processing: 'bg-blue-500/15 text-blue-400 border-blue-500/20',
   completed: 'bg-emerald-500/15 text-emerald-400 border-emerald-500/20',
   failed: 'bg-red-500/15 text-red-400 border-red-500/20',

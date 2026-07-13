@@ -69,7 +69,8 @@ function invalidateUnsubscribedCache() {
 
 // --- Valid upload status transitions ---
 const VALID_TRANSITIONS = {
-  idle: ['processing'],
+  idle: ['processing', 'scheduled'],
+  scheduled: ['idle', 'processing'],
   processing: ['completed', 'failed'],
   completed: [],
   failed: ['idle'],
@@ -393,6 +394,80 @@ apiRouter.post('/uploads/:id/send', catchAsync(async (req, res) => {
   });
 }));
 
+// POST /uploads/:id/schedule
+apiRouter.post('/uploads/:id/schedule', catchAsync(async (req, res) => {
+  const { id } = req.params;
+  await authenticate(req);
+  const { templateId, scheduledAt } = req.body;
+
+  if (!templateId || !scheduledAt) {
+    return res.status(400).json({ message: 'templateId and scheduledAt are required' });
+  }
+
+  const upload = await prisma.upload.findUnique({ where: { id } });
+  if (!upload) return res.status(404).json({ message: 'Upload not found' });
+
+  try {
+    assertCanTransition(upload.status, 'scheduled');
+  } catch (e) {
+    return res.status(400).json({ message: e.message });
+  }
+
+  const template = await prisma.template.findUnique({ where: { id: templateId } });
+  if (!template) return res.status(404).json({ message: 'Template not found' });
+
+  const schedDate = new Date(scheduledAt);
+  if (isNaN(schedDate.getTime()) || schedDate <= new Date()) {
+    return res.status(400).json({ message: 'scheduledAt must be a valid date in the future' });
+  }
+
+  const updatedUpload = await prisma.upload.update({
+    where: { id },
+    data: {
+      status: 'scheduled',
+      templateId,
+      scheduledAt: schedDate,
+    },
+  });
+
+  return res.status(200).json({
+    message: 'Campaign scheduled successfully',
+    upload: updatedUpload,
+  });
+}));
+
+// POST /uploads/:id/unschedule
+apiRouter.post('/uploads/:id/unschedule', catchAsync(async (req, res) => {
+  const { id } = req.params;
+  await authenticate(req);
+
+  const upload = await prisma.upload.findUnique({ where: { id } });
+  if (!upload) return res.status(404).json({ message: 'Upload not found' });
+
+  if (upload.status !== 'scheduled') {
+    return res.status(400).json({ message: 'Campaign is not scheduled' });
+  }
+
+  try {
+    assertCanTransition(upload.status, 'idle');
+  } catch (e) {
+    return res.status(400).json({ message: e.message });
+  }
+
+  const updatedUpload = await prisma.upload.update({
+    where: { id },
+    data: {
+      status: 'idle',
+      scheduledAt: null,
+    },
+  });
+
+  return res.status(200).json({
+    message: 'Campaign schedule cancelled',
+    upload: updatedUpload,
+  });
+}));
+
 // POST /uploads/:id/send-batch
 apiRouter.post('/uploads/:id/send-batch', batchLimiter, catchAsync(async (req, res) => {
   const { id } = req.params;
@@ -460,6 +535,7 @@ apiRouter.post('/uploads/:id/send-batch', batchLimiter, catchAsync(async (req, r
         data: {
           deliveryStatus: 'failed',
           deliveryError: lastError?.message || 'All retry attempts failed',
+          sentAt: new Date(),
         },
       });
       results.push({ id: contact.id, status: 'failed' });
@@ -567,7 +643,7 @@ apiRouter.get('/contacts/logs', catchAsync(async (req, res) => {
   const page = parseInt(req.query.page || '1', 10);
   const limit = parseInt(req.query.limit || '10', 10);
   const skip = (page - 1) * limit;
-  const { search, status } = req.query;
+  const { search, status, startDate, endDate } = req.query;
 
   const where = {
     deliveryStatus: { not: 'idle' },
@@ -582,6 +658,16 @@ apiRouter.get('/contacts/logs', catchAsync(async (req, res) => {
       { name: { contains: search, mode: 'insensitive' } },
       { email: { contains: search, mode: 'insensitive' } },
     ];
+  }
+
+  if (startDate || endDate) {
+    where.sentAt = {};
+    if (startDate) {
+      where.sentAt.gte = new Date(`${startDate}T00:00:00.000Z`);
+    }
+    if (endDate) {
+      where.sentAt.lte = new Date(`${endDate}T23:59:59.999Z`);
+    }
   }
 
   const [logs, total] = await Promise.all([
@@ -848,9 +934,237 @@ app.use((err, req, res, next) => {
   return res.status(status).json({ message: err.message });
 });
 
+// --- Campaign background sending worker ---
+async function runCampaignInBackground(uploadId, templateId) {
+  try {
+    const template = await prisma.template.findUnique({ where: { id: templateId } });
+    if (!template) {
+      console.error(`[Scheduler] Template ${templateId} not found for upload ${uploadId}`);
+      await prisma.upload.update({
+        where: { id: uploadId },
+        data: { status: 'failed' }
+      });
+      return;
+    }
+
+    // Recount stats to be completely accurate before starting
+    const counts = await recountUploadStats(uploadId);
+    await prisma.upload.update({
+      where: { id: uploadId },
+      data: {
+        totalCount: counts.validEmails,
+        pendingCount: counts.pendingCount,
+        skippedCount: counts.skippedCount,
+        sentCount: counts.sentCount,
+        failedCount: counts.failedCount,
+      }
+    });
+
+    const contacts = await prisma.contact.findMany({
+      where: { uploadId, deliveryStatus: 'pending' },
+    });
+
+    console.log(`[Scheduler] Starting background processing for campaign ${uploadId} with ${contacts.length} pending contacts.`);
+
+    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+
+    for (let i = 0; i < contacts.length; i++) {
+      // Re-fetch the upload state to check if the campaign status has been cancelled or updated
+      const currentUpload = await prisma.upload.findUnique({ where: { id: uploadId } });
+      if (!currentUpload || currentUpload.status !== 'processing') {
+        console.log(`[Scheduler] Campaign ${uploadId} is no longer processing (status: ${currentUpload?.status}). Aborting execution loop.`);
+        break;
+      }
+
+      const contact = contacts[i];
+
+      const token = crypto
+        .createHash('sha256')
+        .update(contact.email + 'desire-unsubscribe-salt')
+        .digest('hex')
+        .substring(0, 32);
+      const unsubscribeLink = `${frontendUrl}/unsubscribe/${token}`;
+
+      const variables = { name: contact.name, email: contact.email, unsubscribeLink };
+      const rendered = renderTemplate(
+        { id: template.id, subject: template.subject, htmlBody: template.htmlBody, plainTextBody: template.plainTextBody },
+        variables
+      );
+
+      let attempts = 0;
+      const maxAttempts = 3;
+      let lastError = null;
+      let sentSuccessfully = false;
+
+      while (attempts < maxAttempts) {
+        try {
+          await sendEmail({ to: contact.email, subject: rendered.subject, html: rendered.html, text: rendered.text });
+          await prisma.contact.update({
+            where: { id: contact.id },
+            data: { deliveryStatus: 'sent', deliveryError: null, sentAt: new Date() },
+          });
+          sentSuccessfully = true;
+          break;
+        } catch (err) {
+          attempts++;
+          lastError = err;
+          console.warn(`[Scheduler] Attempt ${attempts} failed for ${contact.email}: ${err.message}`);
+          if (attempts < maxAttempts) await new Promise((r) => setTimeout(r, 2000));
+        }
+      }
+
+      if (!sentSuccessfully) {
+        await prisma.contact.update({
+          where: { id: contact.id },
+          data: {
+            deliveryStatus: 'failed',
+            deliveryError: lastError?.message || 'All retry attempts failed',
+            sentAt: new Date(),
+          },
+        });
+      }
+
+      // Update upload metrics atomically
+      await prisma.upload.update({
+        where: { id: uploadId },
+        data: {
+          sentCount: sentSuccessfully ? { increment: 1 } : undefined,
+          failedCount: !sentSuccessfully ? { increment: 1 } : undefined,
+          pendingCount: { decrement: 1 },
+        },
+      });
+
+      // Pause to avoid rate limits (2.5s to 3.5s jitter)
+      if (i < contacts.length - 1) {
+        const delay = Math.floor(Math.random() * 1000) + 2500;
+        await new Promise((r) => setTimeout(r, delay));
+      }
+    }
+
+    // Finalize campaign status
+    await checkUploadCompletion(uploadId);
+    console.log(`[Scheduler] Finished background processing for campaign ${uploadId}.`);
+  } catch (error) {
+    console.error(`[Scheduler] Critical error in background execution for campaign ${uploadId}:`, error);
+    await prisma.upload.update({
+      where: { id: uploadId },
+      data: { status: 'failed' }
+    });
+  }
+}
+
+// Recovery logic for campaigns stuck in processing on startup
+async function recoverStuckCampaigns() {
+  try {
+    const stuckCampaigns = await prisma.upload.findMany({
+      where: { status: 'processing' },
+    });
+
+    for (const campaign of stuckCampaigns) {
+      if (!campaign.templateId) {
+        console.warn(`[Scheduler] Stuck campaign ${campaign.id} has no template ID. Marking as failed.`);
+        await prisma.upload.update({ where: { id: campaign.id }, data: { status: 'failed' } });
+        continue;
+      }
+
+      const pendingCount = await prisma.contact.count({
+        where: { uploadId: campaign.id, deliveryStatus: 'pending' },
+      });
+
+      if (pendingCount > 0) {
+        console.log(`[Scheduler] Resuming stuck campaign: ${campaign.id} (${campaign.originalName}) with ${pendingCount} pending emails.`);
+        runCampaignInBackground(campaign.id, campaign.templateId).catch(err => {
+          console.error(`[Scheduler] Error resuming campaign ${campaign.id}:`, err);
+        });
+      } else {
+        console.log(`[Scheduler] Finalizing stuck campaign: ${campaign.id} (${campaign.originalName}) as no pending emails remain.`);
+        await checkUploadCompletion(campaign.id);
+      }
+    }
+  } catch (err) {
+    console.error('[Scheduler] Error during stuck campaign recovery:', err);
+  }
+}
+
+// Background scheduler checker
+function initCampaignScheduler() {
+  console.log('[Scheduler] Background campaign scheduler initialized.');
+  
+  // Run startup recovery
+  recoverStuckCampaigns().catch(err => {
+    console.error('[Scheduler] Error in startup campaign recovery:', err);
+  });
+
+  setInterval(async () => {
+    try {
+      const now = new Date();
+      const scheduledCampaigns = await prisma.upload.findMany({
+        where: {
+          status: 'scheduled',
+          scheduledAt: {
+            lte: now,
+          },
+        },
+      });
+
+      for (const campaign of scheduledCampaigns) {
+        if (!campaign.templateId) {
+          console.warn(`[Scheduler] Scheduled campaign ${campaign.id} has no template ID. Marking as failed.`);
+          await prisma.upload.update({ where: { id: campaign.id }, data: { status: 'failed', scheduledAt: null } });
+          continue;
+        }
+
+        console.log(`[Scheduler] Starting scheduled campaign: ${campaign.id} (${campaign.originalName})`);
+        
+        // Prepare contacts (unsubscribes and pending status check)
+        const contacts = await prisma.contact.findMany({ where: { uploadId: campaign.id, status: 'valid' } });
+        if (contacts.length === 0) {
+          console.warn(`[Scheduler] Scheduled campaign ${campaign.id} has no valid contacts. Finalizing.`);
+          await prisma.upload.update({ where: { id: campaign.id }, data: { status: 'failed', scheduledAt: null } });
+          continue;
+        }
+
+        const unsubscribedSet = await getUnsubscribedSet();
+        const unsubscribedArray = [...unsubscribedSet];
+
+        const [skippedResult, pendingResult] = await Promise.all([
+          prisma.contact.updateMany({
+            where: { uploadId: campaign.id, status: 'valid', email: { in: unsubscribedArray } },
+            data: { deliveryStatus: 'skipped', deliveryError: 'Email is unsubscribed' },
+          }),
+          prisma.contact.updateMany({
+            where: { uploadId: campaign.id, status: 'valid', email: { notIn: unsubscribedArray } },
+            data: { deliveryStatus: 'pending' },
+          }),
+        ]);
+
+        await prisma.upload.update({
+          where: { id: campaign.id },
+          data: {
+            status: 'processing',
+            totalCount: contacts.length,
+            pendingCount: pendingResult.count,
+            skippedCount: skippedResult.count,
+            sentCount: 0,
+            failedCount: 0,
+          },
+        });
+
+        // Trigger execution asynchronously
+        runCampaignInBackground(campaign.id, campaign.templateId).catch(err => {
+          console.error(`[Scheduler] Error running scheduled campaign ${campaign.id}:`, err);
+        });
+      }
+    } catch (err) {
+      console.error('[Scheduler] Error in check interval:', err);
+    }
+  }, 30000); // Check every 30 seconds
+}
+
 const PORT = process.env.PORT || 7071;
 app.listen(PORT, () => {
   console.log(`[Express Started] Backend listening on port ${PORT}`);
+  initCampaignScheduler();
 });
 
 module.exports = app;

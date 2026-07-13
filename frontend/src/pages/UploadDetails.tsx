@@ -43,6 +43,14 @@ export default function UploadDetails() {
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const [isPreviewModalOpen, setIsPreviewModalOpen] = useState(false);
   const [iframeHeight, setIframeHeight] = useState('400px');
+  const [sendType, setSendType] = useState<'immediate' | 'scheduled'>('immediate');
+  const [scheduledAt, setScheduledAt] = useState(() => {
+    const date = new Date();
+    date.setHours(date.getHours() + 1);
+    date.setMinutes(0);
+    const tzOffset = date.getTimezoneOffset() * 60000;
+    return new Date(date.getTime() - tzOffset).toISOString().slice(0, 16);
+  });
 
   // Edit Contact States
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
@@ -310,6 +318,35 @@ export default function UploadDetails() {
 
   const handleStartSend = async () => {
     if (!id || !selectedTemplateId) return;
+
+    if (sendType === 'scheduled') {
+      if (!scheduledAt) {
+        toast.error('Please select a scheduled date and time');
+        return;
+      }
+      const schedDate = new Date(scheduledAt);
+      if (schedDate <= new Date()) {
+        toast.error('Scheduled time must be in the future');
+        return;
+      }
+
+      setSending(true);
+      try {
+        await uploadApi.scheduleSend(id, {
+          templateId: selectedTemplateId,
+          scheduledAt: schedDate.toISOString(),
+        });
+        toast.success('Campaign scheduled successfully!');
+        setIsSendModalOpen(false);
+        fetchDetails();
+      } catch (err: any) {
+        toast.error(err.response?.data?.message || 'Failed to schedule campaign');
+      } finally {
+        setSending(false);
+      }
+      return;
+    }
+
     setSending(true);
     try {
       const response = await uploadApi.startSend(id, selectedTemplateId);
@@ -384,6 +421,26 @@ export default function UploadDetails() {
     }
   };
 
+  const handleCancelSchedule = async () => {
+    if (!id) return;
+    setSending(true);
+    try {
+      await uploadApi.unscheduleSend(id);
+      toast.success('Campaign schedule cancelled');
+      fetchDetails();
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || 'Failed to cancel schedule');
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const getMinDateTimeString = () => {
+    const now = new Date();
+    const tzOffset = now.getTimezoneOffset() * 60000;
+    return new Date(Date.now() - tzOffset).toISOString().slice(0, 16);
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -419,11 +476,42 @@ export default function UploadDetails() {
               className="btn-primary flex items-center gap-2 text-sm font-medium"
             >
               <Play className="w-4 h-4" />
-              Send Email Template
+              Send / Schedule Campaign
             </button>
           )}
         </div>
       </div>
+
+      {/* Scheduled indicator */}
+      {upload.status === 'scheduled' && (
+        <div className="bg-purple-500/10 border border-purple-500/20 rounded-xl p-6 flex flex-col md:flex-row md:items-center justify-between gap-4 animate-fade-in">
+          <div className="flex items-start gap-3">
+            <Clock className="w-6 h-6 text-purple-400 shrink-0 mt-0.5" />
+            <div>
+              <p className="text-sm font-semibold text-white">Campaign Scheduled</p>
+              <p className="text-sm text-purple-300 mt-1">
+                This email campaign is scheduled to start automatically on{' '}
+                <span className="font-semibold text-white">
+                  {new Date(upload.scheduledAt!).toLocaleDateString()}{' '}
+                  {new Date(upload.scheduledAt!).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                </span>.
+              </p>
+              {upload.template && (
+                <p className="text-xs text-purple-400/80 mt-1">
+                  Template: <span className="font-medium text-purple-300">{upload.template.name}</span>
+                </p>
+              )}
+            </div>
+          </div>
+          <button
+            onClick={handleCancelSchedule}
+            className="px-4 py-2 border border-red-500/30 hover:border-red-500 hover:bg-red-500/10 text-red-400 rounded-xl text-sm font-semibold transition-all self-start md:self-center"
+            disabled={sending}
+          >
+            Cancel Schedule
+          </button>
+        </div>
+      )}
 
       {/* Processing indicator */}
       {(upload.status === 'processing' || (batchProgress && batchProgress.active)) && (
@@ -634,9 +722,70 @@ export default function UploadDetails() {
                   </div>
                 </div>
 
+                {/* Send Type Selector */}
+                <div className="space-y-2">
+                  <label className="text-xs font-semibold text-gray-400 uppercase tracking-wider">
+                    Sending Method
+                  </label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setSendType('immediate')}
+                      className={`py-2.5 px-3 text-xs font-semibold rounded-xl border transition-all ${
+                        sendType === 'immediate'
+                          ? 'bg-brand-600/30 text-white border-brand-500 shadow-[0_0_12px_rgba(99,102,241,0.2)]'
+                          : 'bg-white/5 border-white/10 text-gray-400 hover:text-white hover:bg-white/10'
+                      }`}
+                    >
+                      Send Immediately
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSendType('scheduled')}
+                      className={`py-2.5 px-3 text-xs font-semibold rounded-xl border transition-all ${
+                        sendType === 'scheduled'
+                          ? 'bg-brand-600/30 text-white border-brand-500 shadow-[0_0_12px_rgba(99,102,241,0.2)]'
+                          : 'bg-white/5 border-white/10 text-gray-400 hover:text-white hover:bg-white/10'
+                      }`}
+                    >
+                      Schedule for Later
+                    </button>
+                  </div>
+                </div>
+
+                {/* Date/Time Picker */}
+                {sendType === 'scheduled' && (
+                  <div className="space-y-2 animate-slide-down">
+                    <label className="text-xs font-semibold text-gray-400 uppercase tracking-wider">
+                      Schedule Date & Time
+                    </label>
+                    <input
+                      type="datetime-local"
+                      value={scheduledAt}
+                      onChange={(e) => setScheduledAt(e.target.value)}
+                      min={getMinDateTimeString()}
+                      className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-white placeholder-gray-500 focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 hover:border-white/20 transition-all text-sm [color-scheme:dark]"
+                    />
+                    <div className="bg-white/5 border border-white/5 rounded-lg p-2.5 text-[11px] text-gray-400 space-y-1 mt-1.5">
+                      <p className="font-semibold text-white">⚠️ Incomplete Date/Time Warning</p>
+                      <p>
+                        Please fill out **all** fields (Month, Day, Year, Hour, Minute, and AM/PM). If any part shows <span className="text-brand-300 font-mono">--</span>, the system will not receive a valid date.
+                      </p>
+                    </div>
+                  </div>
+                )}
+
                 <div className="flex items-center gap-3 pt-2">
                   <button
-                    onClick={() => setIsSendModalOpen(false)}
+                    onClick={() => {
+                      setIsSendModalOpen(false);
+                      setSendType('immediate');
+                      const date = new Date();
+                      date.setHours(date.getHours() + 1);
+                      date.setMinutes(0);
+                      const tzOffset = date.getTimezoneOffset() * 60000;
+                      setScheduledAt(new Date(date.getTime() - tzOffset).toISOString().slice(0, 16));
+                    }}
                     className="btn-secondary w-full text-sm py-2.5"
                     disabled={sending}
                   >
@@ -649,10 +798,12 @@ export default function UploadDetails() {
                   >
                     {sending ? (
                       <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : sendType === 'scheduled' ? (
+                      <Clock className="w-4 h-4" />
                     ) : (
                       <Send className="w-4 h-4" />
                     )}
-                    Send Emails
+                    {sendType === 'scheduled' ? 'Schedule Campaign' : 'Send Emails'}
                   </button>
                 </div>
               </div>

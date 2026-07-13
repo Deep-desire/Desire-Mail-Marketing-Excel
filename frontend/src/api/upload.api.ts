@@ -36,6 +36,12 @@ export const uploadApi = {
   finalizeSend: (id: string) =>
     api.post<{ status: string }>(`/uploads/${id}/finalize`),
 
+  scheduleSend: (id: string, data: { templateId: string; scheduledAt: string }) =>
+    api.post<{ message: string }>(`/uploads/${id}/schedule`, data),
+
+  unscheduleSend: (id: string) =>
+    api.post<{ message: string }>(`/uploads/${id}/unschedule`),
+
   update: (id: string, data: Partial<{ fileName: string; originalName: string }>) =>
     api.put<Upload>(`/uploads/${id}`, data),
 
@@ -58,7 +64,7 @@ export const uploadApi = {
       skippedCount: number;
     }>(`/uploads/${id}/stats`),
 
-  getDeliveryLogs: (params: { page?: number; limit?: number; search?: string; status?: string }) =>
+  getDeliveryLogs: (params: { page?: number; limit?: number; search?: string; status?: string; startDate?: string; endDate?: string }) =>
     api.get<{
       logs: Array<Contact & { upload: { originalName: string; fileName: string; template: Template | null } }>;
       total: number;
