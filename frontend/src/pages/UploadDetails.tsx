@@ -375,12 +375,11 @@ export default function UploadDetails() {
     setSending(true);
     try {
       const response = await uploadApi.startSend(id, selectedTemplateId);
-      const { queuedContacts } = response.data;
+      const { queuedContacts, batchSize = 5, batchDelayMs = 15000 } = response.data;
 
       setIsSendModalOpen(false);
 
       if (queuedContacts && queuedContacts.length > 0) {
-        const batchSize = 5;
         const batches = [];
         for (let i = 0; i < queuedContacts.length; i += batchSize) {
           batches.push(queuedContacts.slice(i, i + batchSize));
@@ -407,9 +406,9 @@ export default function UploadDetails() {
           // Refresh list / stats in background
           fetchDetails();
 
-          // Sleep 15 seconds between batches to honor rate limits
+          // Sleep between batches to honor rate limits
           if (i < batches.length - 1) {
-            let countdown = 15; // 15 seconds
+            let countdown = Math.ceil(batchDelayMs / 1000);
             setNextBatchCountdown(countdown);
 
             const timer = setInterval(() => {
@@ -422,7 +421,7 @@ export default function UploadDetails() {
               }
             }, 1000);
 
-            await new Promise((resolve) => setTimeout(resolve, 15000));
+            await new Promise((resolve) => setTimeout(resolve, batchDelayMs));
             clearInterval(timer);
             setNextBatchCountdown(null);
           }

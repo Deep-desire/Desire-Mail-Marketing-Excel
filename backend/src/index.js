@@ -11,6 +11,11 @@ const { renderTemplate, invalidateTemplate } = require('./templates-service');
 
 require('dotenv').config();
 
+// --- Rate Limit Settings for Email Sending ---
+const EMAIL_BATCH_SIZE = parseInt(process.env.EMAIL_BATCH_SIZE || '5', 10);
+const EMAIL_BATCH_DELAY_MS = parseInt(process.env.EMAIL_BATCH_DELAY_MS || '15000', 10);
+const EMAIL_INDIVIDUAL_DELAY_MS = parseInt(process.env.EMAIL_INDIVIDUAL_DELAY_MS || '10000', 10);
+
 const app = express();
 
 // --- CORS ---
@@ -391,6 +396,8 @@ apiRouter.post('/uploads/:id/send', catchAsync(async (req, res) => {
     queuedCount: pendingResult.count,
     skippedCount: skippedResult.count,
     queuedContacts: queuedContacts.map((c) => ({ id: c.id, email: c.email, name: c.name })),
+    batchSize: EMAIL_BATCH_SIZE,
+    batchDelayMs: EMAIL_BATCH_DELAY_MS,
   });
 }));
 
@@ -541,9 +548,8 @@ apiRouter.post('/uploads/:id/send-batch', batchLimiter, catchAsync(async (req, r
       results.push({ id: contact.id, status: 'failed' });
     }
 
-    // Add a random delay (jitter) between 2.5s and 3.5s per email to stay under M365 limits
-    const delay = Math.floor(Math.random() * 1000) + 2500;
-    await new Promise((r) => setTimeout(r, delay));
+    // Add individual email sending delay to honor rate limits
+    await new Promise((r) => setTimeout(r, EMAIL_INDIVIDUAL_DELAY_MS));
   }
 
   let sentCount = 0, failedCount = 0;
@@ -1034,10 +1040,16 @@ async function runCampaignInBackground(uploadId, templateId) {
         },
       });
 
-      // Pause to avoid rate limits (2.5s to 3.5s jitter)
+      // Pause to avoid rate limits
       if (i < contacts.length - 1) {
-        const delay = Math.floor(Math.random() * 1000) + 2500;
-        await new Promise((r) => setTimeout(r, delay));
+        const isEndOfBatch = (i + 1) % EMAIL_BATCH_SIZE === 0;
+        if (isEndOfBatch) {
+          console.log(`[Scheduler] Batch of ${EMAIL_BATCH_SIZE} completed. Waiting ${EMAIL_BATCH_DELAY_MS}ms batch delay + ${EMAIL_INDIVIDUAL_DELAY_MS}ms individual delay...`);
+          await new Promise((r) => setTimeout(r, EMAIL_INDIVIDUAL_DELAY_MS));
+          await new Promise((r) => setTimeout(r, EMAIL_BATCH_DELAY_MS));
+        } else {
+          await new Promise((r) => setTimeout(r, EMAIL_INDIVIDUAL_DELAY_MS));
+        }
       }
     }
 

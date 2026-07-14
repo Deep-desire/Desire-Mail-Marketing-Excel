@@ -28,6 +28,8 @@ export const uploadApi = {
       queuedCount: number;
       skippedCount: number;
       queuedContacts: Array<{ id: string; name: string; email: string }>;
+      batchSize?: number;
+      batchDelayMs?: number;
     }>(`/uploads/${id}/send`, { templateId, smtpConfigId }),
 
   sendBatch: (id: string, data: { templateId: string; contactIds: string[] }) =>
