@@ -131,10 +131,23 @@ async function checkUploadCompletion(uploadId) {
     where: { uploadId, deliveryStatus: 'pending' },
   });
 
-  if (pendingCount === 0 && upload.status === 'processing') {
-    const finalStatus =
-      upload.failedCount > 0 && upload.sentCount === 0 ? 'failed' : 'completed';
-    await prisma.upload.update({ where: { id: uploadId }, data: { status: finalStatus } });
+  if (pendingCount === 0) {
+    // Recount stats to ensure the upload counters are perfectly synchronized
+    const counts = await recountUploadStats(uploadId);
+    let finalStatus = upload.status;
+    if (upload.status === 'processing') {
+      finalStatus = counts.failedCount > 0 && counts.sentCount === 0 ? 'failed' : 'completed';
+    }
+    await prisma.upload.update({
+      where: { id: uploadId },
+      data: {
+        status: finalStatus,
+        sentCount: counts.sentCount,
+        failedCount: counts.failedCount,
+        pendingCount: counts.pendingCount,
+        skippedCount: counts.skippedCount,
+      },
+    });
     return finalStatus;
   }
   return upload.status;
@@ -489,10 +502,10 @@ apiRouter.post('/uploads/:id/send-batch', batchLimiter, catchAsync(async (req, r
   if (!template) return res.status(404).json({ message: 'Template not found' });
 
   const contacts = await prisma.contact.findMany({
-    where: { id: { in: contactIds }, uploadId: id },
+    where: { id: { in: contactIds }, uploadId: id, deliveryStatus: 'pending' },
   });
   if (contacts.length === 0) {
-    return res.status(400).json({ message: 'No matching contacts found for the specified IDs' });
+    return res.status(200).json({ sent: 0, failed: 0 });
   }
 
   // Templates are compiled once per batch — cache handles cross-batch reuse
@@ -983,6 +996,13 @@ async function runCampaignInBackground(uploadId, templateId) {
       }
 
       const contact = contacts[i];
+
+      // Double-check contact status to prevent duplicate sending/concurrency issues
+      const freshContact = await prisma.contact.findUnique({ where: { id: contact.id } });
+      if (!freshContact || freshContact.deliveryStatus !== 'pending') {
+        console.log(`[Scheduler] Skipping contact ${contact.email} as it is no longer pending (status: ${freshContact?.deliveryStatus}).`);
+        continue;
+      }
 
       const token = crypto
         .createHash('sha256')
