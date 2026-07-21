@@ -10,11 +10,5 @@
       "entrypoint": "src/index.js",
       "routePrefix": "/api"
     }
-  },
-  "crons": [
-    {
-      "path": "/api/cron/check-scheduler",
-      "schedule": "0 0 * * *"
-    }
-  ]
+  }
 }
