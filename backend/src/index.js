@@ -204,6 +204,18 @@ apiRouter.get('/health', catchAsync(async (_req, res) => {
   res.status(dbOk ? 200 : 503).json({ status: dbOk ? 'ok' : 'degraded', db: dbOk });
 }));
 
+// GET /cron/check-scheduler
+apiRouter.get('/cron/check-scheduler', catchAsync(async (req, res) => {
+  const authHeader = req.headers['authorization'];
+  const cronSecret = process.env.CRON_SECRET;
+  if (cronSecret && authHeader !== `Bearer ${cronSecret}`) {
+    return res.status(401).json({ message: 'Unauthorized cron trigger' });
+  }
+
+  const results = await runSchedulerIncrementally();
+  return res.status(200).json({ success: true, ...results });
+}));
+
 // POST /auth/login
 apiRouter.post('/auth/login', loginLimiter, catchAsync(async (req, res) => {
   const { email, password } = req.body;
@@ -1116,6 +1128,195 @@ async function recoverStuckCampaigns() {
   } catch (err) {
     console.error('[Scheduler] Error during stuck campaign recovery:', err);
   }
+}
+
+// Incremental scheduler runner for serverless/cron environments
+async function runSchedulerIncrementally() {
+  const startTime = Date.now();
+  const TIME_LIMIT_MS = 6000; // 6 seconds budget to stay safe within Vercel's limits
+  
+  let startedCampaignsCount = 0;
+  let emailsSentCount = 0;
+  let emailsFailedCount = 0;
+
+  try {
+    // 1. Recover / transition scheduled campaigns that are due
+    const now = new Date();
+    const scheduledCampaigns = await prisma.upload.findMany({
+      where: {
+        status: 'scheduled',
+        scheduledAt: {
+          lte: now,
+        },
+      },
+    });
+
+    for (const campaign of scheduledCampaigns) {
+      if (!campaign.templateId) {
+        console.warn(`[Scheduler] Scheduled campaign ${campaign.id} has no template ID. Marking as failed.`);
+        await prisma.upload.update({ where: { id: campaign.id }, data: { status: 'failed', scheduledAt: null } });
+        continue;
+      }
+
+      console.log(`[Scheduler] Starting scheduled campaign: ${campaign.id} (${campaign.originalName})`);
+      
+      const contacts = await prisma.contact.findMany({ where: { uploadId: campaign.id, status: 'valid' } });
+      if (contacts.length === 0) {
+        console.warn(`[Scheduler] Scheduled campaign ${campaign.id} has no valid contacts. Finalizing.`);
+        await prisma.upload.update({ where: { id: campaign.id }, data: { status: 'failed', scheduledAt: null } });
+        continue;
+      }
+
+      const unsubscribedSet = await getUnsubscribedSet();
+      const unsubscribedArray = [...unsubscribedSet];
+
+      const [skippedResult, pendingResult] = await Promise.all([
+        prisma.contact.updateMany({
+          where: { uploadId: campaign.id, status: 'valid', email: { in: unsubscribedArray } },
+          data: { deliveryStatus: 'skipped', deliveryError: 'Email is unsubscribed' },
+        }),
+        prisma.contact.updateMany({
+          where: { uploadId: campaign.id, status: 'valid', email: { notIn: unsubscribedArray } },
+          data: { deliveryStatus: 'pending' },
+        }),
+      ]);
+
+      await prisma.upload.update({
+        where: { id: campaign.id },
+        data: {
+          status: 'processing',
+          totalCount: contacts.length,
+          pendingCount: pendingResult.count,
+          skippedCount: skippedResult.count,
+          sentCount: 0,
+          failedCount: 0,
+        },
+      });
+
+      startedCampaignsCount++;
+    }
+
+    // 2. Process campaigns currently in 'processing' status
+    const processingCampaigns = await prisma.upload.findMany({
+      where: { status: 'processing' },
+    });
+
+    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+
+    for (const campaign of processingCampaigns) {
+      // Check budget
+      if (Date.now() - startTime > TIME_LIMIT_MS) {
+        break;
+      }
+
+      const template = await prisma.template.findUnique({ where: { id: campaign.templateId } });
+      if (!template) {
+        console.error(`[Scheduler] Template ${campaign.templateId} not found for campaign ${campaign.id}`);
+        await prisma.upload.update({ where: { id: campaign.id }, data: { status: 'failed' } });
+        continue;
+      }
+
+      // Grab up to 5 pending contacts to keep the slice quick
+      const contacts = await prisma.contact.findMany({
+        where: { uploadId: campaign.id, deliveryStatus: 'pending' },
+        take: 5,
+      });
+
+      if (contacts.length === 0) {
+        await checkUploadCompletion(campaign.id);
+        continue;
+      }
+
+      for (const contact of contacts) {
+        if (Date.now() - startTime > TIME_LIMIT_MS) {
+          break;
+        }
+
+        const freshContact = await prisma.contact.findUnique({ where: { id: contact.id } });
+        if (!freshContact || freshContact.deliveryStatus !== 'pending') {
+          continue;
+        }
+
+        const token = crypto
+          .createHash('sha256')
+          .update(contact.email + 'desire-unsubscribe-salt')
+          .digest('hex')
+          .substring(0, 32);
+        const unsubscribeLink = `${frontendUrl}/unsubscribe/${token}`;
+
+        const variables = { name: contact.name, email: contact.email, unsubscribeLink };
+        const rendered = renderTemplate(
+          { id: template.id, subject: template.subject, htmlBody: template.htmlBody, plainTextBody: template.plainTextBody },
+          variables
+        );
+
+        let sentSuccessfully = false;
+        let lastError = null;
+        let attempts = 0;
+        const maxAttempts = 3;
+
+        while (attempts < maxAttempts) {
+          try {
+            await sendEmail({ to: contact.email, subject: rendered.subject, html: rendered.html, text: rendered.text });
+            await prisma.contact.update({
+              where: { id: contact.id },
+              data: { deliveryStatus: 'sent', deliveryError: null, sentAt: new Date() },
+            });
+            sentSuccessfully = true;
+            emailsSentCount++;
+            break;
+          } catch (err) {
+            attempts++;
+            lastError = err;
+            console.warn(`[Cron Scheduler] Attempt ${attempts} failed for ${contact.email}: ${err.message}`);
+            if (attempts < maxAttempts) {
+              await new Promise((r) => setTimeout(r, 1000));
+            }
+          }
+        }
+
+        if (!sentSuccessfully) {
+          await prisma.contact.update({
+            where: { id: contact.id },
+            data: {
+              deliveryStatus: 'failed',
+              deliveryError: lastError?.message || 'All retry attempts failed',
+              sentAt: new Date(),
+            },
+          });
+          emailsFailedCount++;
+        }
+
+        // Update metrics
+        await prisma.upload.update({
+          where: { id: campaign.id },
+          data: {
+            sentCount: sentSuccessfully ? { increment: 1 } : undefined,
+            failedCount: !sentSuccessfully ? { increment: 1 } : undefined,
+            pendingCount: { decrement: 1 },
+          },
+        });
+
+        // Small delay if we have time
+        const delay = Math.min(EMAIL_INDIVIDUAL_DELAY_MS, 500);
+        if (delay > 0 && (Date.now() - startTime < TIME_LIMIT_MS)) {
+          await new Promise((r) => setTimeout(r, delay));
+        }
+      }
+
+      await checkUploadCompletion(campaign.id);
+    }
+  } catch (err) {
+    console.error('[Scheduler] Error in incremental scheduler run:', err);
+    throw err;
+  }
+
+  return {
+    startedCampaigns: startedCampaignsCount,
+    emailsSent: emailsSentCount,
+    emailsFailed: emailsFailedCount,
+    elapsedMs: Date.now() - startTime,
+  };
 }
 
 // Background scheduler checker
