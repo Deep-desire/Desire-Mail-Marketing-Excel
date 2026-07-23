@@ -18,13 +18,47 @@ const EMAIL_INDIVIDUAL_DELAY_MS = parseInt(process.env.EMAIL_INDIVIDUAL_DELAY_MS
 
 const app = express();
 
-// --- CORS ---
-app.use(cors({
-  origin: process.env.FRONTEND_URL || 'http://localhost:5173',
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
-}));
+// --- CORS Configuration ---
+app.use(
+  cors({
+    origin: function (origin, callback) {
+      // Allow requests with no origin (e.g. mobile apps, curl, Postman, server-to-server)
+      if (!origin) return callback(null, true);
+
+      // Dynamically allow all Vercel domains (*.vercel.app), Render domains, and localhost
+      if (
+        origin.endsWith('.vercel.app') ||
+        origin.endsWith('.onrender.com') ||
+        origin.includes('localhost') ||
+        process.env.FRONTEND_URL === '*'
+      ) {
+        return callback(null, origin);
+      }
+
+      // Read FRONTEND_URL env var, split multiple origins, and auto-prefix missing https://
+      if (process.env.FRONTEND_URL) {
+        const allowedOrigins = process.env.FRONTEND_URL.split(',').map((item) => {
+          let trimmed = item.trim();
+          if (!trimmed.startsWith('http://') && !trimmed.startsWith('https://')) {
+            trimmed = 'https://' + trimmed;
+          }
+          return trimmed;
+        });
+
+        if (allowedOrigins.includes(origin)) {
+          return callback(null, origin);
+        }
+      }
+
+      // Permissive fallback so cross-domain deployment never gets blocked
+      return callback(null, origin);
+    },
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+  })
+);
+
 
 app.use(express.json());
 
