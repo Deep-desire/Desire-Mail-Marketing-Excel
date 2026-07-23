@@ -1,7 +1,13 @@
 import axios from 'axios';
 
+const rawApiUrl =
+  import.meta.env.VITE_API_URL
+
+// Ensure baseURL is normalized without trailing slashes
+const baseURL = rawApiUrl.endsWith('/') ? rawApiUrl.slice(0, -1) : rawApiUrl;
+
 const api = axios.create({
-  baseURL: import.meta.env.VITE_API_URL || '/api',
+  baseURL,
   headers: {
     'Content-Type': 'application/json',
   },

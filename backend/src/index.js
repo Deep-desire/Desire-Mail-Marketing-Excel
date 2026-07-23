@@ -586,8 +586,8 @@ apiRouter.post('/uploads/:id/send-batch', batchLimiter, catchAsync(async (req, r
   await prisma.upload.update({
     where: { id },
     data: {
-      sentCount:    { increment: sentCount },
-      failedCount:  { increment: failedCount },
+      sentCount: { increment: sentCount },
+      failedCount: { increment: failedCount },
       pendingCount: { decrement: contacts.length },
     },
   });
@@ -741,7 +741,7 @@ apiRouter.put('/contacts/:id', catchAsync(async (req, res) => {
 
   const oldEmail = contact.email;
   const newEmail = email !== undefined ? email.trim().toLowerCase() : contact.email;
-  const newName  = name  !== undefined ? name.trim()               : contact.name;
+  const newName = name !== undefined ? name.trim() : contact.name;
 
   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   let newStatus = 'valid';
@@ -780,19 +780,19 @@ apiRouter.put('/contacts/:id', catchAsync(async (req, res) => {
   const upload = await prisma.upload.findUnique({ where: { id: uploadId } });
 
   const updateData = {
-    totalRows:          counts.totalRows,
-    validEmails:        counts.validEmails,
-    invalidEmails:      counts.invalidEmails,
-    duplicateEmails:    counts.duplicateEmails,
+    totalRows: counts.totalRows,
+    validEmails: counts.validEmails,
+    invalidEmails: counts.invalidEmails,
+    duplicateEmails: counts.duplicateEmails,
     unsubscribedEmails: counts.unsubscribedEmails,
   };
 
   if (upload && upload.status !== 'idle') {
-    updateData.totalCount    = counts.validEmails;
-    updateData.sentCount     = counts.sentCount;
-    updateData.failedCount   = counts.failedCount;
-    updateData.pendingCount  = counts.pendingCount;
-    updateData.skippedCount  = counts.skippedCount;
+    updateData.totalCount = counts.validEmails;
+    updateData.sentCount = counts.sentCount;
+    updateData.failedCount = counts.failedCount;
+    updateData.pendingCount = counts.pendingCount;
+    updateData.skippedCount = counts.skippedCount;
   }
 
   await prisma.upload.update({ where: { id: uploadId }, data: updateData });
@@ -817,19 +817,19 @@ apiRouter.delete('/contacts/:id', catchAsync(async (req, res) => {
   const upload = await prisma.upload.findUnique({ where: { id: uploadId } });
 
   const updateData = {
-    totalRows:          counts.totalRows,
-    validEmails:        counts.validEmails,
-    invalidEmails:      counts.invalidEmails,
-    duplicateEmails:    counts.duplicateEmails,
+    totalRows: counts.totalRows,
+    validEmails: counts.validEmails,
+    invalidEmails: counts.invalidEmails,
+    duplicateEmails: counts.duplicateEmails,
     unsubscribedEmails: counts.unsubscribedEmails,
   };
 
   if (upload && upload.status !== 'idle') {
-    updateData.totalCount    = counts.validEmails;
-    updateData.sentCount     = counts.sentCount;
-    updateData.failedCount   = counts.failedCount;
-    updateData.pendingCount  = counts.pendingCount;
-    updateData.skippedCount  = counts.skippedCount;
+    updateData.totalCount = counts.validEmails;
+    updateData.sentCount = counts.sentCount;
+    updateData.failedCount = counts.failedCount;
+    updateData.pendingCount = counts.pendingCount;
+    updateData.skippedCount = counts.skippedCount;
   }
 
   await prisma.upload.update({ where: { id: uploadId }, data: updateData });
@@ -896,9 +896,9 @@ apiRouter.put('/templates/:id', catchAsync(async (req, res) => {
   const updated = await prisma.template.update({
     where: { id },
     data: {
-      name:          name          || template.name,
-      subject:       subject       || template.subject,
-      htmlBody:      htmlBody      || template.htmlBody,
+      name: name || template.name,
+      subject: subject || template.subject,
+      htmlBody: htmlBody || template.htmlBody,
       plainTextBody: plainTextBody || template.plainTextBody,
     },
   });
@@ -1134,7 +1134,7 @@ async function recoverStuckCampaigns() {
 async function runSchedulerIncrementally() {
   const startTime = Date.now();
   const TIME_LIMIT_MS = 6000; // 6 seconds budget to stay safe within Vercel's limits
-  
+
   let startedCampaignsCount = 0;
   let emailsSentCount = 0;
   let emailsFailedCount = 0;
@@ -1159,7 +1159,7 @@ async function runSchedulerIncrementally() {
       }
 
       console.log(`[Scheduler] Starting scheduled campaign: ${campaign.id} (${campaign.originalName})`);
-      
+
       const contacts = await prisma.contact.findMany({ where: { uploadId: campaign.id, status: 'valid' } });
       if (contacts.length === 0) {
         console.warn(`[Scheduler] Scheduled campaign ${campaign.id} has no valid contacts. Finalizing.`);
@@ -1322,7 +1322,7 @@ async function runSchedulerIncrementally() {
 // Background scheduler checker
 function initCampaignScheduler() {
   console.log('[Scheduler] Background campaign scheduler initialized.');
-  
+
   // Run startup recovery
   recoverStuckCampaigns().catch(err => {
     console.error('[Scheduler] Error in startup campaign recovery:', err);
@@ -1348,7 +1348,7 @@ function initCampaignScheduler() {
         }
 
         console.log(`[Scheduler] Starting scheduled campaign: ${campaign.id} (${campaign.originalName})`);
-        
+
         // Prepare contacts (unsubscribes and pending status check)
         const contacts = await prisma.contact.findMany({ where: { uploadId: campaign.id, status: 'valid' } });
         if (contacts.length === 0) {
